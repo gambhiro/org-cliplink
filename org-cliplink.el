@@ -564,15 +564,52 @@ TITLE-REGEXP does not match TITLE, return the original TITLE."
                                              org-cliplink-curl-transport-arguments)
       (org-cliplink-http-get-request--url-el url url-retrieve-callback basic-auth))))
 
+(defvar evil-state)
+
+(defun org-cliplink-evil-normal-state-p ()
+  "Return non-nil when the current buffer is in evil normal state."
+  (and (bound-and-true-p evil-local-mode)
+       (eq evil-state 'normal)))
+
+(defun org-cliplink-insertion-point ()
+  "Return the position where a link should be inserted.
+That is point, except in evil normal state, where the cursor sits on
+a character and point is just before it. There the link goes after
+that character, as `evil-paste-after' does, unless the line is empty."
+  (if (and (org-cliplink-evil-normal-state-p)
+           (not (eolp)))
+      (1+ (point))
+    (point)))
+
 ;;;###autoload
 (defun org-cliplink-insert-transformed-title (url transformer)
   "Takes the URL, asynchronously retrieves the title and applies
 a custom TRANSFORMER which transforms the url and title and insert
-the required text to the current buffer."
-  (org-cliplink-retrieve-title
-   url
-   (lambda (url title)
-     (insert (funcall transformer url title)))))
+the required text to the current buffer.
+
+The text goes where the command was called, even if point moved
+while the title was being retrieved. If point did not move, it
+follows the inserted text."
+  (let ((origin (point-marker))
+        (marker (copy-marker (org-cliplink-insertion-point))))
+    (org-cliplink-retrieve-title
+     url
+     (lambda (url title)
+       (let ((text (funcall transformer url title))
+             (follow (= (point) origin)))
+         (if (not follow)
+             (save-excursion
+               (goto-char marker)
+               (insert text))
+           (goto-char marker)
+           (insert text)
+           ;; Leave the cursor on the last inserted character, as
+           ;; `evil-paste-after' does.
+           (when (and (org-cliplink-evil-normal-state-p)
+                      (> (length text) 0))
+             (backward-char))))
+       (set-marker origin nil)
+       (set-marker marker nil)))))
 
 ;;;###autoload
 (defun org-cliplink-retrieve-title-synchronously (url)

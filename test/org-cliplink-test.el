@@ -225,3 +225,55 @@
           (apply #'funcall callback))
         (should (equal (buffer-string)
                        "https://a.org/1x [[https://a.org/2][T]]"))))))
+
+(ert-deftest org-cliplink-inserts-where-called-test ()
+  (let ((callbacks nil))
+    (cl-letf (((symbol-function 'org-cliplink-retrieve-title)
+               (lambda (url title-callback)
+                 (push (list title-callback url "T") callbacks))))
+      (with-temp-buffer
+        (insert "one two")
+        (goto-char 4)
+        (org-cliplink-insert-transformed-title
+         "https://a.org" #'org-cliplink-org-mode-link-transformer)
+        (goto-char (point-max))
+        (insert " three")
+        (dolist (callback callbacks)
+          (apply #'funcall callback))
+        (should (equal (buffer-string) "one[[https://a.org][T]] two three"))
+        (should (= (point) (point-max)))))))
+
+(ert-deftest org-cliplink-point-follows-inserted-link-test ()
+  (org-cliplink-with-fake-titles
+   (with-temp-buffer
+     (insert "one two")
+     (goto-char 4)
+     (org-cliplink-insert-transformed-title
+      "https://a.org" (lambda (_url _title) "LINK"))
+     (should (equal (buffer-string) "oneLINK two"))
+     (should (= (point) 8)))))
+
+(ert-deftest org-cliplink-evil-normal-state-inserts-after-cursor-test ()
+  (org-cliplink-with-fake-titles
+   (with-temp-buffer
+     (setq-local evil-local-mode t)
+     (setq-local evil-state 'normal)
+     (insert "trailing space \nnext")
+     (goto-char 15)
+     (org-cliplink-insert-transformed-title
+      "https://a.org" (lambda (_url _title) "LINK"))
+     (should (equal (buffer-string) "trailing space LINK\nnext"))
+     (should (= (point) 19))
+     (goto-char (point-max))
+     (insert "\n")
+     (org-cliplink-insert-transformed-title
+      "https://a.org" (lambda (_url _title) "LINK"))
+     (should (equal (buffer-string) "trailing space LINK\nnext\nLINK")))
+   (with-temp-buffer
+     (setq-local evil-local-mode t)
+     (setq-local evil-state 'insert)
+     (insert "a b")
+     (goto-char 2)
+     (org-cliplink-insert-transformed-title
+      "https://a.org" (lambda (_url _title) "LINK"))
+     (should (equal (buffer-string) "aLINK b")))))
