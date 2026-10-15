@@ -595,11 +595,12 @@ Group 1 is the URL, group 2 the description, if any.")
   "<\\(https?://[^<>[:space:]]+\\)>"
   "Regexp for an org-mode angle link to an http/https URL.")
 
-(defun org-cliplink-link-at-point ()
-  "Return the http/https link at point as (URL BEG END DESCRIBED).
+(defun org-cliplink-link-around-point ()
+  "Return the http/https link around point as (URL BEG END DESCRIBED).
 The link can be a bare URL, <URL>, [[URL]] or [[URL][DESCRIPTION]].
 BEG and END span the whole link, and DESCRIBED is non-nil when it
-already has a description. Return nil when there is no link at point."
+already has a description. Return nil when there is no link around
+point."
   (save-excursion
     (save-match-data
       (cond
@@ -621,16 +622,29 @@ already has a description. Return nil when there is no link at point."
           (when (and url (string-match-p "\\`https?://" url))
             (list url (car bounds) (cdr bounds) nil))))))))
 
+(defun org-cliplink-link-at-point ()
+  "Return the http/https link at point, or just after point.
+The result is as for `org-cliplink-link-around-point'. When there is
+no link around point but one starts at the next character, return
+that one, so a cursor on the character before a link finds it too."
+  (or (org-cliplink-link-around-point)
+      (unless (eobp)
+        (save-excursion
+          (forward-char)
+          (let ((link (org-cliplink-link-around-point)))
+            (when (and link (= (nth 1 link) (point)))
+              link))))))
+
 (defun org-cliplink-links-in-region (beg end)
   "Return the links without a description that start between BEG and END.
-Each element is (URL BEG END), as for `org-cliplink-link-at-point'."
+Each element is (URL BEG END), as for `org-cliplink-link-around-point'."
   (save-excursion
     (save-match-data
       (goto-char beg)
       (let ((links nil))
         (while (re-search-forward "https?://" end t)
           (goto-char (match-beginning 0))
-          (let ((link (org-cliplink-link-at-point)))
+          (let ((link (org-cliplink-link-around-point)))
             (if (not link)
                 (goto-char (match-end 0))
               (unless (nth 3 link)

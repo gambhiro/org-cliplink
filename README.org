@@ -28,8 +28,9 @@
    Then copy any http/https URL to the clipboard, switch to the Emacs
    window and hit ~C-x p i~.
 
-   When point is on an http/https URL in the buffer, ~org-cliplink~
-   converts that URL instead of using the clipboard. When the region is
+   When the cursor is on an http/https URL in the buffer, or on the
+   character just before it, ~org-cliplink~ converts that URL instead of
+   using the clipboard. When the region is
    active, it converts every URL in the region. Bare URLs, ~<URL>~ and
    ~[[URL]]~ are converted. Links that already have a description,
    ~[[URL][DESCRIPTION]]~, are left as they are.

@@ -137,10 +137,13 @@
                ("see [[https://a.org/x][A]] now" "https://a.org/x" 5 27 t)))
     (with-temp-buffer
       (insert (car x))
-      (goto-char 12)
-      (let ((link (org-cliplink-link-at-point)))
-        (should (equal (butlast (cdr x)) (butlast link)))
-        (should (equal (nth 4 x) (and (nth 3 link) t))))))
+      (dolist (pos (list 4 5 12 (nth 3 x)))
+        (goto-char pos)
+        (let ((link (org-cliplink-link-at-point)))
+          (should (equal (butlast (cdr x)) (butlast link)))
+          (should (equal (nth 4 x) (and (nth 3 link) t)))))
+      (goto-char 3)
+      (should (not (org-cliplink-link-at-point)))))
   (with-temp-buffer
     (insert "no links here, ftp://a.org/x")
     (goto-char 4)
@@ -184,6 +187,12 @@
      (org-cliplink)
      (should (equal (buffer-string)
                     "see [[https://a.org/x][Title of https://a.org/x]].")))
+   (with-temp-buffer
+     (insert "see https://a.org/x")
+     (goto-char 4)
+     (org-cliplink)
+     (should (equal (buffer-string)
+                    "see [[https://a.org/x][Title of https://a.org/x]]")))
    (with-temp-buffer
      (insert "see [[https://a.org/x][Mine]]")
      (goto-char 10)
