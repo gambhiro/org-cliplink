@@ -51,6 +51,7 @@
 
 (require 'em-glob)
 (require 'subr-x) ; for string-trim
+(require 'thingatpt)
 
 (require 'org-cliplink-string)
 (require 'org-cliplink-transport)
@@ -585,14 +586,108 @@ the required text to the current buffer."
             (org-cliplink-extract-and-prepare-title-from-current-buffer))
            org-cliplink-max-length))))))
 
+(defconst org-cliplink-bracket-link-re
+  "\\[\\[\\(https?://[^][]+\\)\\]\\(\\[[^][]*\\]\\)?\\]"
+  "Regexp for an org-mode bracket link to an http/https URL.
+Group 1 is the URL, group 2 the description, if any.")
+
+(defconst org-cliplink-angle-link-re
+  "<\\(https?://[^<>[:space:]]+\\)>"
+  "Regexp for an org-mode angle link to an http/https URL.")
+
+(defun org-cliplink-link-at-point ()
+  "Return the http/https link at point as (URL BEG END DESCRIBED).
+The link can be a bare URL, <URL>, [[URL]] or [[URL][DESCRIPTION]].
+BEG and END span the whole link, and DESCRIBED is non-nil when it
+already has a description. Return nil when there is no link at point."
+  (save-excursion
+    (save-match-data
+      (cond
+       ((thing-at-point-looking-at org-cliplink-bracket-link-re)
+        (list (match-string-no-properties 1)
+              (match-beginning 0)
+              (match-end 0)
+              (match-beginning 2)))
+       ((thing-at-point-looking-at org-cliplink-angle-link-re)
+        (list (match-string-no-properties 1)
+              (match-beginning 0)
+              (match-end 0)
+              nil))
+       (t
+        (let* ((bounds (bounds-of-thing-at-point 'url))
+               (url (when bounds
+                      (buffer-substring-no-properties (car bounds)
+                                                      (cdr bounds)))))
+          (when (and url (string-match-p "\\`https?://" url))
+            (list url (car bounds) (cdr bounds) nil))))))))
+
+(defun org-cliplink-links-in-region (beg end)
+  "Return the links without a description that start between BEG and END.
+Each element is (URL BEG END), as for `org-cliplink-link-at-point'."
+  (save-excursion
+    (save-match-data
+      (goto-char beg)
+      (let ((links nil))
+        (while (re-search-forward "https?://" end t)
+          (goto-char (match-beginning 0))
+          (let ((link (org-cliplink-link-at-point)))
+            (if (not link)
+                (goto-char (match-end 0))
+              (unless (nth 3 link)
+                (push (butlast link) links))
+              (goto-char (nth 2 link)))))
+        (nreverse links)))))
+
+(defun org-cliplink-replace-with-link (url beg end)
+  "Replace the text between BEG and END with an org-mode link to URL.
+The title is retrieved asynchronously. If the text between BEG and
+END changed in the meantime, it is left alone."
+  (let ((text (buffer-substring-no-properties beg end))
+        (beg (copy-marker beg))
+        (end (copy-marker end t)))
+    (org-cliplink-retrieve-title
+     url
+     (lambda (url title)
+       (if (equal text (buffer-substring-no-properties beg end))
+           (save-excursion
+             (goto-char beg)
+             (delete-region beg end)
+             (insert (org-cliplink-org-mode-link-transformer url title)))
+         (message "org-cliplink: %s was edited, not converting it" url))
+       (set-marker beg nil)
+       (set-marker end nil)))))
+
 ;;;###autoload
 (defun org-cliplink ()
-  "Takes a URL from the clipboard and inserts an org-mode link
-with the title of a page found by the URL into the current
-buffer"
+  "Insert an org-mode link with the title of the page found by a URL.
+When the region is active, convert every http/https URL in it that
+is not already a link with a description. Otherwise, when point is
+on such a URL, convert it. Otherwise take the URL from the
+clipboard and insert the link at point."
   (interactive)
-  (org-cliplink-insert-transformed-title (org-cliplink-clipboard-content)
-                                         'org-cliplink-org-mode-link-transformer))
+  (let ((link (unless (use-region-p)
+                (org-cliplink-link-at-point))))
+    (cond
+     ((use-region-p)
+      (let ((links (org-cliplink-links-in-region (region-beginning)
+                                                 (region-end))))
+        (deactivate-mark)
+        (unless links
+          (user-error "No URLs without a description in the region"))
+        ;; Last first, so a link replaced right away cannot shift the
+        ;; positions of the links before it.
+        (dolist (link (reverse links))
+          (apply #'org-cliplink-replace-with-link link))
+        (message "org-cliplink: converting %d URL%s"
+                 (length links) (if (cdr links) "s" ""))))
+     ((nth 3 link)
+      (user-error "The link at point already has a description"))
+     (link
+      (apply #'org-cliplink-replace-with-link (butlast link)))
+     (t
+      (org-cliplink-insert-transformed-title
+       (org-cliplink-clipboard-content)
+       'org-cliplink-org-mode-link-transformer)))))
 
 ;;;###autoload
 (defun org-cliplink-capture ()

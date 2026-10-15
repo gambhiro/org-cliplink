@@ -122,3 +122,97 @@
    (stub message => :times 0)
    (should (equal nil
                   (org-cliplink-retrieve-title-synchronously "file:///.")))))
+
+(defmacro org-cliplink-with-fake-titles (&rest body)
+  "Run BODY with titles retrieved synchronously as \"Title of URL\"."
+  `(cl-letf (((symbol-function 'org-cliplink-retrieve-title)
+              (lambda (url title-callback)
+                (funcall title-callback url (concat "Title of " url)))))
+     ,@body))
+
+(ert-deftest org-cliplink-link-at-point-test ()
+  (dolist (x '(("see https://a.org/x now" "https://a.org/x" 5 20 nil)
+               ("see <https://a.org/x> now" "https://a.org/x" 5 22 nil)
+               ("see [[https://a.org/x]] now" "https://a.org/x" 5 24 nil)
+               ("see [[https://a.org/x][A]] now" "https://a.org/x" 5 27 t)))
+    (with-temp-buffer
+      (insert (car x))
+      (goto-char 12)
+      (let ((link (org-cliplink-link-at-point)))
+        (should (equal (butlast (cdr x)) (butlast link)))
+        (should (equal (nth 4 x) (and (nth 3 link) t))))))
+  (with-temp-buffer
+    (insert "no links here, ftp://a.org/x")
+    (goto-char 4)
+    (should (not (org-cliplink-link-at-point)))
+    (goto-char (- (point-max) 3))
+    (should (not (org-cliplink-link-at-point)))))
+
+(ert-deftest org-cliplink-links-in-region-test ()
+  (with-temp-buffer
+    (insert "a https://a.org/1, <https://a.org/2>\n"
+            "[[https://a.org/3]] [[https://a.org/4][Four https://a.org/5]]\n"
+            "https://a.org/6")
+    (should (equal '(("https://a.org/1" 3 18)
+                     ("https://a.org/2" 20 37)
+                     ("https://a.org/3" 38 57))
+                   (org-cliplink-links-in-region (point-min) 100)))
+    (should (equal '(("https://a.org/6" 100 115))
+                   (org-cliplink-links-in-region 99 (point-max))))))
+
+(ert-deftest org-cliplink-converts-region-test ()
+  (org-cliplink-with-fake-titles
+   (with-temp-buffer
+     (setq-local transient-mark-mode t)
+     (insert "keep https://a.org/0\n"
+             "https://a.org/1 and [[https://a.org/2]] and [[https://a.org/3][Mine]]\n")
+     (set-mark 22)
+     (goto-char (point-max))
+     (org-cliplink)
+     (should (equal (buffer-string)
+                    (concat "keep https://a.org/0\n"
+                            "[[https://a.org/1][Title of https://a.org/1]] and "
+                            "[[https://a.org/2][Title of https://a.org/2]] and "
+                            "[[https://a.org/3][Mine]]\n")))
+     (should (not (region-active-p))))))
+
+(ert-deftest org-cliplink-converts-url-at-point-test ()
+  (org-cliplink-with-fake-titles
+   (with-temp-buffer
+     (insert "see <https://a.org/x>.")
+     (goto-char 10)
+     (org-cliplink)
+     (should (equal (buffer-string)
+                    "see [[https://a.org/x][Title of https://a.org/x]].")))
+   (with-temp-buffer
+     (insert "see [[https://a.org/x][Mine]]")
+     (goto-char 10)
+     (should-error (org-cliplink) :type 'user-error))))
+
+(ert-deftest org-cliplink-falls-back-to-clipboard-test ()
+  (org-cliplink-with-fake-titles
+   (with-temp-buffer
+     (setq-local kill-ring '("https://a.org/clip"))
+     (setq-local kill-ring-yank-pointer kill-ring)
+     (setq-local interprogram-paste-function nil)
+     (insert "see ")
+     (org-cliplink)
+     (should (equal (buffer-string)
+                    "see [[https://a.org/clip][Title of https://a.org/clip]]")))))
+
+(ert-deftest org-cliplink-skips-edited-url-test ()
+  (let ((callbacks nil))
+    (cl-letf (((symbol-function 'org-cliplink-retrieve-title)
+               (lambda (url title-callback)
+                 (push (list title-callback url "T") callbacks)))
+              ((symbol-function 'message) #'ignore))
+      (with-temp-buffer
+        (insert "https://a.org/1 https://a.org/2")
+        (org-cliplink-replace-with-link "https://a.org/1" 1 16)
+        (org-cliplink-replace-with-link "https://a.org/2" 17 32)
+        (goto-char 16)
+        (insert "x")
+        (dolist (callback callbacks)
+          (apply #'funcall callback))
+        (should (equal (buffer-string)
+                       "https://a.org/1x [[https://a.org/2][T]]"))))))
